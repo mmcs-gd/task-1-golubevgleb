@@ -2,12 +2,16 @@ const canvas = document.getElementById("cnvs");
 
 const gameState = {};
 
-const SEC_IN_MILLIS = 1000;
-
-function onMouseMove(e) {
-  gameState.pointer.x = e.pageX;
-  gameState.pointer.y = e.pageY;
-}
+const GRID = 20;
+const RADIUS_OF_TRIANGLE = 5;
+const RADIUS_OF_CIRCLE = 5;
+const RADIUS_OF_HEXAGON = 5;
+const COUNT_OF_TRIANGLES = 600;
+const COUNT_OF_CIRCLES = 0;
+const COUNT_OF_HEXAGONS = 600;
+const HEXAGON = "hexagon";
+const CIRCLE = "circle";
+const TRIANGLE = "triangle";
 
 function queueUpdates(numTicks) {
   for (let i = 0; i < numTicks; i++) {
@@ -19,66 +23,35 @@ function queueUpdates(numTicks) {
 function draw(tFrame) {
   const context = canvas.getContext("2d");
 
-  // clear canvas
+  //clear canvas
   context.clearRect(0, 0, canvas.width, canvas.height);
 
-  drawPlatform(context);
-  drawBall(context);
-  drawScore(context);
-  drawBonus(context);
+  drawPolygons(context);
 }
 
 function update(tick) {
-  const vx = (gameState.pointer.x - gameState.player.x) / 10;
-  gameState.player.x += vx;
-
-  const ball = gameState.ball;
-  ball.y += ball.vy;
-  ball.y += ball.vx;
-
-  const score = gameState.score;
-
-  if (gameState.lastTick - score.lastSave >= SEC_IN_MILLIS) {
-    score.value += 1;
-    score.lastSave = gameState.lastTick;
-  }
-
-  if (gameState.lastTick - ball.lastTick >= 30 * SEC_IN_MILLIS) {
-    ball.vx *= 1.1;
-    ball.vy *= 1.1;
-    ball.lastTick = gameState.lastTick;
-  }
-
-  const bonus = gameState.bonus;
-
-  if (
-    gameState.lastTick - bonus.lastInstance > 15 * SEC_IN_MILLIS &&
-    !bonus.isCreated
-  ) {
-    createBonus();
-  }
-
-  moveBonus();
-
-  checkFloor(ball, function() {
-    stopGame(gameState.stopCycle);
-  });
-  checkFloor(bonus, function() {
-    bonus.isCreated = false;
-  });
-  checkPlatformCollision(ball, function() {
-    ball.vy *= -1;
-  });
-  checkPlatformCollision(bonus, function() {
-    if (bonus.isCreated === true) {
-      bonus.isCreated = false;
-      score.value += 15;
+  const elems = gameState.elems;
+  for (let i = 0; i < elems.length; i++) {
+    for (let j = i + 1; j < elems.length; j++) {
+      if (
+        checkRoughCollision(elems[i], elems[j]) &&
+        checkCollisionPrecisely(elems[i], elems[j])
+      ) {
+        [elems[i].vx, elems[j].vx] = [elems[j].vx, elems[i].vx];
+        [elems[i].vy, elems[j].vy] = [elems[j].vy, elems[i].vy];
+        crash(elems[i]);
+        crash(elems[j]);
+      }
     }
+  }
+
+  elems.forEach(function(elem) {
+    elem.x += elem.vx;
+    elem.y += elem.vy;
+    checkWalls(elem);
   });
-  checkWallCollision(ball);
-  checkWallCollision(bonus);
-  checkCellingCollision(ball);
-  checkCellingCollision(bonus);
+
+  gameState.elems = gameState.elems.filter(e => e.lives > 0);
 }
 
 function run(tFrame) {
@@ -100,158 +73,193 @@ function stopGame(handle) {
   window.cancelAnimationFrame(handle);
 }
 
-function drawPlatform(context) {
-  const { x, y, width, height } = gameState.player;
-  context.beginPath();
-  context.rect(x - width / 2, y - height / 2, width, height);
-  context.fillStyle = "#FF0000";
-  context.fill();
-  context.closePath();
-}
-
-function drawBall(context) {
-  const { x, y, radius } = gameState.ball;
+function drawCircle(context, element) {
+  const { x, y, radius, color } = element;
   context.beginPath();
   context.arc(x, y, radius, 0, 2 * Math.PI);
-  context.fillStyle = "#0000FF";
+  context.fillStyle = color;
   context.fill();
   context.closePath();
 }
 
-function drawScore(context) {
-  const { x, y, width, height, value } = gameState.score;
+function drawPolygons(context) {
+  gameState.elems.forEach(element => {
+    switch (element.type) {
+      case HEXAGON:
+        drawPolygon(context, element);
+        break;
+      case TRIANGLE:
+        drawPolygon(context, element);
+        break;
+      case CIRCLE:
+        drawCircle(context, element);
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+function drawPolygon(context, item) {
+  //расчитать точки заранее, потом просто смещать
+  const { x, y, color, points } = item;
   context.beginPath();
-  context.rect(x, y, width, height);
-  context.fillStyle = "#CD0074";
-  context.fill();
-  context.fillStyle = "#FFFFFF";
-  context.textAlign = "center";
-  context.font = "18px serif";
-  context.fillText("score: " + value, x + width / 2, y + height / 2 + 5);
-  context.closePath();
-}
-
-function drawBonus(context) {
-  if (gameState.bonus.isCreated) {
-    const { x, y, radius, width } = gameState.bonus;
-    context.beginPath();
-    context.rect(x - radius, y - width / 2, 2 * radius, width);
-    context.rect(x - width / 2, y - radius, width, 2 * radius);
-    context.fillStyle = "#FFD700";
-    context.fill();
-    context.closePath();
+  context.moveTo(x + points[0][0], y + points[0][1]);
+  for (var i = 1; i < points.length; i++) {
+    context.lineTo(x + points[i][0], y + points[i][1]);
   }
+  context.fillStyle = color;
+  context.fill();
+  context.closePath();
 }
 
 function setup() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 
-  canvas.addEventListener("mousemove", onMouseMove, false);
+  const gridIndices = [];
+  for (var i = 1; i < canvas.width / GRID - 1; i++) {
+    for (var j = 1; j < canvas.height / GRID - 1; j++) {
+      gridIndices.push([i, j]);
+    }
+  }
+
+  shuffle(gridIndices);
 
   gameState.lastTick = performance.now();
   gameState.lastRender = gameState.lastTick;
   gameState.tickLength = 15; //ms
+  gameState.gridIndices = gridIndices;
+  gameState.elems = [];
 
-  const platform = {
-    width: 400,
-    height: 50
-  };
-
-  gameState.player = {
-    x: 100,
-    y: canvas.height - platform.height / 2,
-    width: platform.width,
-    height: platform.height
-  };
-  gameState.pointer = {
-    x: 0,
-    y: 0
-  };
-  gameState.ball = {
-    x: canvas.width / 2,
-    y: 0,
-    radius: 25,
-    vx: 0,
-    vy: 5,
-    lastTick: 0
-  };
-  gameState.score = {
-    x: 5,
-    y: 5,
-    width: 100,
-    height: 36,
-    value: 0,
-    lastSave: 0
-  };
-  gameState.bonus = {
-    x: 100,
-    y: 100,
-    radius: 50,
-    width: 50,
-    vx: 0,
-    vy: 0,
-    lastInstance: 0,
-    isCreated: false
-  };
+  generateShapes(HEXAGON, COUNT_OF_HEXAGONS, 0, RADIUS_OF_HEXAGON);
+  generateShapes(
+    TRIANGLE,
+    COUNT_OF_TRIANGLES,
+    COUNT_OF_HEXAGONS + 1,
+    RADIUS_OF_TRIANGLE
+  );
+  generateShapes(
+    CIRCLE,
+    COUNT_OF_CIRCLES,
+    COUNT_OF_HEXAGONS + COUNT_OF_TRIANGLES + 2,
+    RADIUS_OF_CIRCLE
+  );
 }
 
-function checkFloor(item, handler) {
-  if (item.y >= canvas.height + item.radius) {
-    handler();
+function generateShapes(typeShape, count, shift, radius) {
+  const gridIndices = gameState.gridIndices;
+  for (var i = shift; i < count + shift; i++) {
+    const angle = (2 * Math.PI) / getRandomInt(1, 10);
+    gameState.elems.push({
+      x: gridIndices[i][0] * GRID,
+      y: gridIndices[i][1] * GRID,
+      radius: radius,
+      angle: angle,
+      type: typeShape,
+      vx: getRandomInt(-4, 4),
+      vy: getRandomInt(-4, 4),
+      color: "#808080",
+      lives: 3,
+      points: getPointsByType(radius, angle, typeShape)
+    });
+  }
+  console.log(gameState.elems);
+}
+
+function getPointsByType(radius, angle, typeShape) {
+  switch (typeShape) {
+    case HEXAGON:
+      return getPoints(radius, angle, 6);
+    case TRIANGLE:
+      return getPoints(radius, angle, 3);
+    default:
+      return [];
   }
 }
 
-function checkWallCollision(item) {
-  if (item.x + item.radius >= canvas.width || item.x + item.radius <= 0) {
-    item.vx *= -1;
+function getPoints(radius, angle, cnt) {
+  const points = [[radius * Math.cos(angle), radius * Math.sin(angle)]];
+  for (var i = 1; i < cnt + 1; i++) {
+    let newAngle = angle + (i * 2 * Math.PI) / cnt;
+    points.push([radius * Math.cos(newAngle), radius * Math.sin(newAngle)]);
   }
-}
-
-function checkCellingCollision(item) {
-  if (item.y + item.radius < 0) {
-    item.vy *= -1;
-  }
-}
-
-function checkPlatformCollision(item, handler) {
-  const player = gameState.player;
-  if (
-    item.y + item.radius >= canvas.height - player.height &&
-    item.x + item.radius >= player.x - player.width / 2 &&
-    item.x + item.radius <= player.x + player.width / 2 &&
-    item.y < player.y - player.height / 2
-  ) {
-    handler();
-  }
-}
-
-function bounceOff() {
-  gameState.ball.vx *= -1;
+  return points;
 }
 
 function getRandomInt(min, max) {
   min = Math.ceil(min);
   max = Math.floor(max);
-  return Math.floor(Math.random() * (max - min)) + min; //Максимум не включается, минимум включается
+  return Math.random() * (max - min) + min; //Максимум не включается, минимум включается
 }
 
-function createBonus() {
-  const bonus = gameState.bonus;
-  bonus.radius = getRandomInt(10, 20);
-  bonus.x = getRandomInt(0 + bonus.radius, canvas.width - bonus.radius);
-  bonus.y = getRandomInt(0 + bonus.radius, canvas.height / 2);
-  bonus.vx = getRandomInt(-10, 10);
-  bonus.vy = getRandomInt(1, 5);
-  bonus.width = getRandomInt(5, 10);
-  bonus.isCreated = true;
-  bonus.lastInstance = gameState.lastTick;
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    let j = Math.floor(Math.random() * (i + 1)); // random index from 0 to i
+    [array[i], array[j]] = [array[j], array[i]];
+  }
 }
 
-function moveBonus() {
-  const bonus = gameState.bonus;
-  bonus.x += bonus.vx;
-  bonus.y += bonus.vy;
+function checkWalls(elem) {
+  if (elem.x - elem.radius < 0 || elem.x + elem.radius > canvas.width) {
+    elem.vx *= -1;
+  }
+  if (elem.y - elem.radius < 0 || elem.y + elem.radius > canvas.height) {
+    elem.vy *= -1;
+  }
+}
+
+function checkRoughCollision(lhd, rhd) {
+  var dx = lhd.x - rhd.x;
+  var dy = lhd.y - rhd.y;
+  var distance = Math.sqrt(dx * dx + dy * dy);
+  return distance < lhd.radius + rhd.radius;
+}
+
+function checkCollisionPrecisely(lhd, rhd) {
+  for (let i = 0; i < lhd.points.length - 1; i++) {
+    for (let j = 0; j < rhd.points.length - 1; j++) {
+      if (
+        isEdgesIntersect(
+          lhd.points[i][0] + lhd.x,
+          lhd.points[i][1] + lhd.y,
+          lhd.points[i + 1][0] + lhd.x,
+          lhd.points[i + 1][1] + lhd.y,
+          rhd.points[j][0] + rhd.x,
+          rhd.points[j][1] + rhd.y,
+          rhd.points[j + 1][0] + rhd.x,
+          rhd.points[j + 1][1] + rhd.y
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function isEdgesIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+  const r =
+    ((ay - cy) * (dx - cx) - (ax - cx) * (dy - cy)) /
+    ((bx - ax) * (dy - cy) - (by - ay) * (dx - cx));
+  const s =
+    ((ay - cy) * (bx - ax) - (ax - cx) * (by - ay)) /
+    ((bx - ax) * (dy - cy) - (by - ay) * (dx - cx));
+  return r >= 0 && r <= 1 && s >= 0 && s <= 1;
+}
+
+function crash(elem) {
+  elem.lives--;
+  switch (elem.lives) {
+    case 2:
+      elem.color = "#F8F32B";
+      break;
+    case 1:
+      elem.color = "#991400";
+      break;
+    default:
+      break;
+  }
 }
 
 setup();
